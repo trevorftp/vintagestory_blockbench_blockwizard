@@ -738,6 +738,33 @@ function vs_wizard_json_text(value) {
     return JSON.stringify(value, null, 2);
 }
 
+function vs_wizard_clean_block_code(value) {
+    return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
+
+function vs_wizard_slug_block_code(value) {
+    let code = String(value || '').trim().toLowerCase()
+        .replace(/[_\s]+/g, '-')
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+    return code || 'myblock';
+}
+
+function vs_wizard_default_asset_block_code(desc) {
+    if (desc.default_code) return desc.default_code;
+    let code = vs_wizard_slug_block_code(desc.name || desc.id || 'block');
+    if (!/(^|-)block$/.test(code)) code += '-block';
+    if (desc.actual_code && vs_wizard_clean_block_code(code) === vs_wizard_clean_block_code(desc.actual_code)) {
+        code += '-custom';
+    }
+    return code;
+}
+
+function vs_wizard_default_asset_display_name(desc) {
+    return desc.default_display || ('Custom ' + (desc.name || 'Block'));
+}
+
 function vs_wizard_known_or_custom(value, known) {
     if (!value) return '';
     return known.indexOf(value) >= 0 ? value : 'custom';
@@ -1184,8 +1211,9 @@ function vs_wizard_form_values_from_blocktype(data, desc) {
     let climate_maps = ['', 'climatePlantTint', 'climateWaterTint'];
     let season_maps = ['', 'seasonFoliage', 'seasonGrass'];
     let values = {
-        block_code: desc.default_code || 'myblock',
-        block_display_name: desc.default_display || 'My Block',
+        block_code: vs_wizard_default_asset_block_code(desc),
+        block_display_name: vs_wizard_default_asset_display_name(desc),
+        preset_actual_code: desc.actual_code || '',
         creative_tabs: desc.creative_tab || (creative_keys.length ? (known_tabs.indexOf(creative_keys[0]) >= 0 ? creative_keys[0] : 'custom') : 'general'),
         creative_tabs_extra: desc.creative_tab ? '' : (creative_keys.length > 1 ? creative_keys.slice(1).join(',') : (creative_keys.length && known_tabs.indexOf(creative_keys[0]) < 0 ? creative_keys[0] : '')),
         texture_mode: desc.texture_mode || (desc.textures ? 'source' : 'single'),
@@ -1396,6 +1424,7 @@ function open_vs_block_wizard(path_mod, fs_mod) {
     let selected_preset_shape_json = '';
     let selected_preset_drawtype = 'cube';
     let selected_preset_collisionbox = 'full';
+    let selected_preset_actual_code = '';
     let shape_choice_state = 'preset';
     let collision_choice_state = 'match';
     let selection_choice_state = 'same';
@@ -1725,6 +1754,10 @@ function open_vs_block_wizard(path_mod, fs_mod) {
                 show_required_message('Block code can only use lowercase letters, numbers, hyphens, and underscores', 2600);
                 return false;
             }
+            if (selected_preset_actual_code && vs_wizard_clean_block_code(form.block_code) === vs_wizard_clean_block_code(selected_preset_actual_code)) {
+                show_required_message('Use a new block code so this mod does not copy the original game block id', 2800);
+                return false;
+            }
             if (is_blank(form.block_display_name)) {
                 show_required_message('Display name is required');
                 return false;
@@ -1879,14 +1912,13 @@ function open_vs_block_wizard(path_mod, fs_mod) {
         selected_preset_shape_json = values.shape_json || '';
         selected_preset_drawtype = values.drawtype || (selected_preset_shape_base || selected_preset_shape_json ? 'json' : 'cube');
         selected_preset_collisionbox = values.collisionbox_preset || 'full';
+        selected_preset_actual_code = values.preset_actual_code || '';
         values.drawtype = values.use_current_shape ? 'current' : 'preset';
         if (selected_preset_texture_path) values.texture_base = '__preset__';
         values.use_current_shape = values.drawtype === 'current';
         values.collisionbox_preset = 'match';
         shape_choice_state = values.drawtype;
         collision_choice_state = 'match';
-        delete values.block_code;
-        delete values.block_display_name;
         if (dialog && dialog.setFormValues) dialog.setFormValues(values, true);
         if (current_page === 'preset') set_step(1);
     });
@@ -2337,6 +2369,7 @@ function open_vs_block_wizard(path_mod, fs_mod) {
                     form.preset_texture_path = selected_preset_texture_path;
                     form.preset_drawtype = selected_preset_drawtype;
                     form.preset_collisionbox_preset = selected_preset_collisionbox;
+                    form.preset_actual_code = selected_preset_actual_code;
                     if (form.drawtype === 'preset') {
                         form.shape_base = selected_preset_shape_base || '';
                         form.shape_json = selected_preset_shape_json || '';
@@ -2595,8 +2628,12 @@ function vs_wizard_open_generated_block(result, path_mod, fs_mod) {
 function generate_vs_block_mod(form, path_mod, fs_mod) {
     let export_mode = form.export_mode === 'integrate' ? 'integrate' : 'new_mod';
     let integrated = export_mode === 'integrate';
-    let block_code = String(form.block_code || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    let block_code = vs_wizard_clean_block_code(form.block_code);
     if (!block_code) throw new Error('Block code is required.');
+    let preset_actual_code = vs_wizard_clean_block_code(form.preset_actual_code);
+    if (preset_actual_code && block_code === preset_actual_code) {
+        throw new Error('Choose a new Block Code. "' + block_code + '" is the original Vintage Story preset block id.');
+    }
 
     let mod_id = '';
     let mod_root = '';
@@ -2974,7 +3011,7 @@ Plugin.register('vintagestory_block_wizard', {
     description: 'Guided Vintage Story block content mod wizard. Requires the base Vintage Story Support plugin.',
     about: 'A separate wizard plugin for generating Vintage Story block content mods. It uses the model formats, codecs, asset helpers, and export implementation exposed by the base Vintage Story Support plugin.',
     tags: ['Vintage Story', 'Wizard', 'Block'],
-    version: '0.1.0',
+    version: '0.1.1',
     min_version: '4.10.0',
     variant: 'both',
     onload() {
